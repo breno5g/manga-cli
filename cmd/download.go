@@ -3,71 +3,61 @@ package cmd
 
 import (
 	"fmt"
-	"strconv"
+	"os"
 
 	"github.com/breno5g/manga-cli/core"
 	"github.com/breno5g/manga-cli/drivers/mangadex"
+	"github.com/breno5g/manga-cli/interfaces"
 	"github.com/spf13/cobra"
 )
 
 var (
 	site     string
 	manga    string
-	start    int
-	end      int
-	output   string
+	chapter  string
 	language string
+	outDir   string
 )
 
 // downloadCmd representa o comando para baixar capítulos de mangá
 var downloadCmd = &cobra.Command{
 	Use:   "download",
 	Short: "Baixa capítulos de mangá",
-	Long:  `Faz o download de um intervalo de capítulos de um mangá específico.`,
+	Long:  "Baixa capítulos de mangá de sites suportados",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Verificar se o site é suportado
-		driver, exists := availableDrivers[site]
-		if !exists {
-			return fmt.Errorf("site não suportado: %s", site)
-		}
-
-		// Configurar idioma para o MangaDex se for o site selecionado
-		if site == "mangadex" {
-			if md, ok := driver.(*mangadex.MangaDexDriver); ok && language != "" {
-				md.SetLanguage(language)
-				fmt.Printf("Idioma configurado para: %s\n", language)
+		var selectedDriver interfaces.Driver
+		for _, d := range availableDrivers {
+			if driver, ok := d.(interfaces.Driver); ok {
+				selectedDriver = driver
+				break
 			}
 		}
 
-		// Criar downloader com o driver selecionado
-		downloader := core.NewDownloader(driver)
-
-		// Fazer download dos capítulos
-		fmt.Printf("Baixando %s, capítulos %d a %d do site %s\n", manga, start, end, site)
-		for i := start; i <= end; i++ {
-			chapter := strconv.Itoa(i)
-			fmt.Printf("Baixando capítulo %s...\n", chapter)
-			if err := downloader.DownloadChapter(manga, chapter, output); err != nil {
-				fmt.Printf("Erro ao baixar capítulo %s: %v\n", chapter, err)
-				continue
-			}
-			fmt.Printf("Capítulo %s baixado com sucesso!\n", chapter)
+		if selectedDriver == nil {
+			return fmt.Errorf("driver não encontrado para o site: %s", site)
 		}
 
-		return nil
+		if mangaDexDriver, ok := selectedDriver.(*mangadex.MangaDexDriver); ok {
+			if langDriver, ok := mangaDexDriver.(interfaces.LanguageSupportDriver); ok {
+				langDriver.SetLanguage(language)
+			}
+		}
+
+		downloader := core.NewDownloader(selectedDriver)
+		return downloader.DownloadChapter(manga, chapter, outDir)
 	},
 }
 
 func init() {
 	// Definir flags para o comando download
-	downloadCmd.Flags().StringVar(&site, "site", "", "Site de origem do mangá (obrigatório)")
-	downloadCmd.Flags().StringVar(&manga, "manga", "", "Nome do mangá (obrigatório)")
-	downloadCmd.Flags().IntVar(&start, "start", 1, "Capítulo inicial")
-	downloadCmd.Flags().IntVar(&end, "end", 1, "Capítulo final")
-	downloadCmd.Flags().StringVar(&output, "output", "./downloads", "Diretório de saída")
-	downloadCmd.Flags().StringVar(&language, "lang", "pt-br", "Idioma dos capítulos (para MangaDex)")
+	downloadCmd.Flags().StringVarP(&site, "site", "s", "", "Site de origem do mangá")
+	downloadCmd.Flags().StringVarP(&manga, "manga", "m", "", "Nome do mangá")
+	downloadCmd.Flags().StringVarP(&chapter, "chapter", "c", "", "Número do capítulo")
+	downloadCmd.Flags().StringVarP(&language, "language", "l", "pt-br", "Idioma das traduções (apenas para MangaDex)")
+	downloadCmd.Flags().StringVarP(&outDir, "output", "o", "downloads", "Diretório de saída")
 
 	// Marcar flags obrigatórias
 	downloadCmd.MarkFlagRequired("site")
 	downloadCmd.MarkFlagRequired("manga")
+	downloadCmd.MarkFlagRequired("chapter")
 }

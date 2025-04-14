@@ -32,12 +32,11 @@ func NewDriver() interfaces.Driver {
 }
 
 // GetChapters retorna a lista de capítulos disponíveis para um mangá
-func (d *UnionMangasDriver) GetChapters(manga string) ([]string, error) {
-	// Formatar o nome do mangá para URL (substituir espaços por hífen e converter para minúsculas)
-	mangaURL := d.formatMangaURL(manga)
+func (d *UnionMangasDriver) GetChapters(mangaName string) ([]string, error) {
+	mangaURL := d.formatMangaURL(mangaName)
+	url := fmt.Sprintf("%s/manga/%s", d.baseURL, mangaURL)
 
-	// Requisição para a página do mangá
-	resp, err := d.client.Get(fmt.Sprintf("%s/manga/%s", d.baseURL, mangaURL))
+	resp, err := d.client.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -47,20 +46,16 @@ func (d *UnionMangasDriver) GetChapters(manga string) ([]string, error) {
 		return nil, fmt.Errorf("erro ao acessar a página do mangá: %s", resp.Status)
 	}
 
-	// Parsear o HTML
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	// Extrair capítulos
-	chapters := []string{}
-	doc.Find(".chapters .cap").Each(func(i int, s *goquery.Selection) {
-		// Extrair o número do capítulo do texto
-		chapterText := strings.TrimSpace(s.Text())
-		re := regexp.MustCompile(`Capítulo (\d+(?:\.\d+)?)`)
-		matches := re.FindStringSubmatch(chapterText)
-		if len(matches) > 1 {
+	var chapters []string
+	doc.Find(".capitulos a").Each(func(i int, s *goquery.Selection) {
+		chapterText := s.Text()
+		re := regexp.MustCompile(`Cap[íi]tulo\s+(\d+(?:\.\d+)?)`)
+		if matches := re.FindStringSubmatch(chapterText); len(matches) > 1 {
 			chapters = append(chapters, matches[1])
 		}
 	})
@@ -69,26 +64,19 @@ func (d *UnionMangasDriver) GetChapters(manga string) ([]string, error) {
 }
 
 // formatMangaURL formata o nome do mangá para uso em URLs
-func (d *UnionMangasDriver) formatMangaURL(manga string) string {
-	// Converter para minúsculas e substituir espaços por hífens
-	formatted := strings.ToLower(manga)
-	formatted = strings.ReplaceAll(formatted, " ", "-")
-	// Remover caracteres especiais
-	re := regexp.MustCompile(`[^a-z0-9\-]`)
-	formatted = re.ReplaceAllString(formatted, "")
-	return formatted
+func (d *UnionMangasDriver) formatMangaURL(mangaName string) string {
+	name := strings.ToLower(mangaName)
+	name = strings.ReplaceAll(name, " ", "-")
+	name = regexp.MustCompile(`[^a-z0-9\-]`).ReplaceAllString(name, "")
+	return name
 }
 
 // DownloadChapter baixa um capítulo específico
-func (d *UnionMangasDriver) DownloadChapter(manga, chapter, outDir string) error {
-	// Formatar o nome do mangá para URL
-	mangaURL := d.formatMangaURL(manga)
+func (d *UnionMangasDriver) DownloadChapter(mangaName, chapterNumber, outputDir string) error {
+	mangaURL := d.formatMangaURL(mangaName)
+	url := fmt.Sprintf("%s/leitor/%s/%s", d.baseURL, mangaURL, chapterNumber)
 
-	// URL do capítulo
-	chapterURL := fmt.Sprintf("%s/leitor/%s/%s", d.baseURL, mangaURL, chapter)
-
-	// Acessar a página do capítulo
-	resp, err := d.client.Get(chapterURL)
+	resp, err := d.client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -98,15 +86,13 @@ func (d *UnionMangasDriver) DownloadChapter(manga, chapter, outDir string) error
 		return fmt.Errorf("erro ao acessar capítulo: %s", resp.Status)
 	}
 
-	// Parsear o HTML
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	// Extrair URLs das imagens
 	var imageURLs []string
-	doc.Find(".img-manga").Each(func(i int, s *goquery.Selection) {
+	doc.Find("#images img").Each(func(i int, s *goquery.Selection) {
 		if src, exists := s.Attr("src"); exists {
 			imageURLs = append(imageURLs, src)
 		}
@@ -116,21 +102,17 @@ func (d *UnionMangasDriver) DownloadChapter(manga, chapter, outDir string) error
 		return fmt.Errorf("nenhuma imagem encontrada no capítulo")
 	}
 
-	// Baixar cada imagem
 	for i, imageURL := range imageURLs {
-		// Definir caminho de saída
 		ext := filepath.Ext(imageURL)
 		if ext == "" {
-			ext = ".jpg" // Extensão padrão se não for detectada
+			ext = ".jpg"
 		}
-		outPath := filepath.Join(outDir, fmt.Sprintf("%03d%s", i+1, ext))
+		outputPath := filepath.Join(outputDir, fmt.Sprintf("%03d%s", i+1, ext))
 
-		// Baixar a imagem
-		if err := d.downloadImage(imageURL, outPath); err != nil {
+		if err := d.downloadImage(imageURL, outputPath); err != nil {
 			return fmt.Errorf("erro ao baixar página %d: %w", i+1, err)
 		}
 
-		// Esperar um pouco para não sobrecarregar o servidor
 		time.Sleep(500 * time.Millisecond)
 	}
 
@@ -138,36 +120,28 @@ func (d *UnionMangasDriver) DownloadChapter(manga, chapter, outDir string) error
 }
 
 // downloadImage baixa uma imagem e salva em um arquivo
-func (d *UnionMangasDriver) downloadImage(imageURL, outPath string) error {
-	// Configurar cabeçalhos para evitar bloqueio
+func (d *UnionMangasDriver) downloadImage(imageURL, outputPath string) error {
 	req, err := http.NewRequest("GET", imageURL, nil)
 	if err != nil {
 		return err
 	}
 
-	// Adicionar cabeçalhos comuns para evitar bloqueios
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("Referer", d.baseURL)
+	req.Header.Set("Accept", "image/webp,*/*")
 
-	// Fazer a requisição
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("erro ao baixar imagem: %s", resp.Status)
-	}
-
-	// Criar arquivo de saída
-	outFile, err := os.Create(outPath)
+	out, err := os.Create(outputPath)
 	if err != nil {
 		return err
 	}
-	defer outFile.Close()
+	defer out.Close()
 
-	// Copiar dados da resposta para o arquivo
-	_, err = io.Copy(outFile, resp.Body)
+	_, err = io.Copy(out, resp.Body)
 	return err
 }

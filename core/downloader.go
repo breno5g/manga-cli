@@ -2,7 +2,6 @@
 package core
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -23,14 +22,18 @@ func NewDownloader(driver interfaces.Driver) *Downloader {
 
 // DownloadChapter faz o download de um capítulo específico
 func (d *Downloader) DownloadChapter(manga, chapter, outDir string) error {
-	// Criar estrutura de diretórios
-	chapterDir := filepath.Join(outDir, manga, chapter)
-	if err := os.MkdirAll(chapterDir, 0755); err != nil {
-		return fmt.Errorf("erro ao criar diretório: %w", err)
+	err := os.MkdirAll(outDir, 0755)
+	if err != nil {
+		return err
 	}
 
-	// Delegar o download para o driver específico
-	return d.driver.DownloadChapter(manga, chapter, chapterDir)
+	outputPath := filepath.Join(outDir, manga, chapter)
+	err = os.MkdirAll(outputPath, 0755)
+	if err != nil {
+		return err
+	}
+
+	return d.driver.DownloadChapter(manga, chapter, outputPath)
 }
 
 // GetChapters obtém a lista de capítulos disponíveis

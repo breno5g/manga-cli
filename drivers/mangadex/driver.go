@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,9 +23,7 @@ type MangaDexDriver struct {
 // NewDriver cria uma nova instância do driver MangaDex
 func NewDriver() interfaces.Driver {
 	return &MangaDexDriver{
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		client:   &http.Client{},
 		language: "pt-br", // Define português do Brasil como idioma padrão
 	}
 }
@@ -32,17 +31,15 @@ func NewDriver() interfaces.Driver {
 // API de busca do MangaDex (simplificada)
 const (
 	apiBaseURL      = "https://api.mangadex.org"
-	searchEndpoint  = "/manga"
-	chapterEndpoint = "/chapter"
+	mangaSearchPath = "/manga"
+	chapterPath     = "/chapter"
+	atHomeServer    = "/at-home/server"
 )
 
 // mangaSearchResult representa a resposta da API de busca do MangaDex
 type mangaSearchResult struct {
 	Data []struct {
-		ID         string `json:"id"`
-		Attributes struct {
-			Title map[string]string `json:"title"`
-		} `json:"attributes"`
+		ID string `json:"id"`
 	} `json:"data"`
 }
 
@@ -51,15 +48,14 @@ type chapterResult struct {
 	Data []struct {
 		ID         string `json:"id"`
 		Attributes struct {
-			Chapter            string `json:"chapter"`
-			TranslatedLanguage string `json:"translatedLanguage"`
+			Chapter string `json:"chapter"`
 		} `json:"attributes"`
 	} `json:"data"`
 }
 
 // chapterPagesResult representa a resposta com os dados de páginas de um capítulo
 type chapterPagesResult struct {
-	BaseURL string `json:"baseUrl"`
+	BaseURL string   `json:"baseUrl"`
 	Chapter struct {
 		Hash      string   `json:"hash"`
 		Data      []string `json:"data"`
@@ -68,45 +64,38 @@ type chapterPagesResult struct {
 }
 
 // GetChapters retorna a lista de capítulos disponíveis para o mangá
-func (d *MangaDexDriver) GetChapters(manga string) ([]string, error) {
-	// 1. Encontrar o ID do mangá pelo nome
-	mangaID, err := d.findMangaID(manga)
+func (d *MangaDexDriver) GetChapters(mangaName string) ([]string, error) {
+	mangaID, err := d.findMangaID(mangaName)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao buscar ID do mangá: %w", err)
+	}
+
+	u, err := url.Parse(apiBaseURL + chapterPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Buscar capítulos pelo ID do mangá
-	req, err := http.NewRequest("GET", apiBaseURL+chapterEndpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	q := req.URL.Query()
+	q := u.Query()
 	q.Add("manga", mangaID)
-	q.Add("translatedLanguage[]", d.language) // Filtrar por idioma português
-	q.Add("limit", "100")                     // Limite de resultados por página
-	req.URL.RawQuery = q.Encode()
+	q.Add("translatedLanguage[]", d.language)
+	q.Add("limit", "100")
+	u.RawQuery = q.Encode()
 
-	resp, err := d.client.Do(req)
+	resp, err := d.client.Get(u.String())
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("erro ao buscar capítulos: %s", resp.Status)
-	}
 
 	var result chapterResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	// Extrair números dos capítulos
 	chapters := make([]string, 0, len(result.Data))
-	for _, ch := range result.Data {
-		if ch.Attributes.Chapter != "" {
-			chapters = append(chapters, ch.Attributes.Chapter)
+	for _, chapter := range result.Data {
+		if chapter.Attributes.Chapter != "" {
+			chapters = append(chapters, chapter.Attributes.Chapter)
 		}
 	}
 
@@ -115,24 +104,20 @@ func (d *MangaDexDriver) GetChapters(manga string) ([]string, error) {
 
 // findMangaID busca o ID do mangá pelo nome
 func (d *MangaDexDriver) findMangaID(mangaName string) (string, error) {
-	req, err := http.NewRequest("GET", apiBaseURL+searchEndpoint, nil)
+	u, err := url.Parse(apiBaseURL + mangaSearchPath)
 	if err != nil {
 		return "", err
 	}
 
-	q := req.URL.Query()
+	q := u.Query()
 	q.Add("title", mangaName)
-	req.URL.RawQuery = q.Encode()
+	u.RawQuery = q.Encode()
 
-	resp, err := d.client.Do(req)
+	resp, err := d.client.Get(u.String())
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("erro ao buscar mangá: %s", resp.Status)
-	}
 
 	var result mangaSearchResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -147,27 +132,23 @@ func (d *MangaDexDriver) findMangaID(mangaName string) (string, error) {
 }
 
 // getChapterID busca o ID do capítulo pelo número e ID do mangá
-func (d *MangaDexDriver) getChapterID(mangaID, chapterNum string) (string, error) {
-	req, err := http.NewRequest("GET", apiBaseURL+chapterEndpoint, nil)
+func (d *MangaDexDriver) getChapterID(mangaID, chapterNumber string) (string, error) {
+	u, err := url.Parse(apiBaseURL + chapterPath)
 	if err != nil {
 		return "", err
 	}
 
-	q := req.URL.Query()
+	q := u.Query()
 	q.Add("manga", mangaID)
-	q.Add("chapter", chapterNum)
-	q.Add("translatedLanguage[]", d.language) // Filtrar por idioma português
-	req.URL.RawQuery = q.Encode()
+	q.Add("chapter", chapterNumber)
+	q.Add("translatedLanguage[]", d.language)
+	u.RawQuery = q.Encode()
 
-	resp, err := d.client.Do(req)
+	resp, err := d.client.Get(u.String())
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("erro ao buscar capítulo: %s", resp.Status)
-	}
 
 	var result chapterResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -175,7 +156,7 @@ func (d *MangaDexDriver) getChapterID(mangaID, chapterNum string) (string, error
 	}
 
 	if len(result.Data) == 0 {
-		return "", fmt.Errorf("capítulo %s não encontrado em português", chapterNum)
+		return "", fmt.Errorf("capítulo não encontrado: %s", chapterNumber)
 	}
 
 	return result.Data[0].ID, nil
@@ -183,15 +164,11 @@ func (d *MangaDexDriver) getChapterID(mangaID, chapterNum string) (string, error
 
 // getChapterPages obtém as URLs das imagens de um capítulo
 func (d *MangaDexDriver) getChapterPages(chapterID string) (*chapterPagesResult, error) {
-	resp, err := d.client.Get(fmt.Sprintf("%s/at-home/server/%s", apiBaseURL, chapterID))
+	resp, err := d.client.Get(fmt.Sprintf("%s%s/%s", apiBaseURL, atHomeServer, chapterID))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("erro ao obter páginas: %s", resp.Status)
-	}
 
 	var result chapterPagesResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -202,59 +179,43 @@ func (d *MangaDexDriver) getChapterPages(chapterID string) (*chapterPagesResult,
 }
 
 // DownloadChapter baixa todas as páginas de um capítulo
-func (d *MangaDexDriver) DownloadChapter(manga, chapter, outDir string) error {
-	fmt.Printf("Buscando capítulo %s de %s em português (pt-br)...\n", chapter, manga)
-
-	// 1. Encontrar o ID do mangá
-	mangaID, err := d.findMangaID(manga)
+func (d *MangaDexDriver) DownloadChapter(mangaName, chapterNumber, outputDir string) error {
+	mangaID, err := d.findMangaID(mangaName)
 	if err != nil {
 		return err
 	}
 
-	// 2. Encontrar o ID do capítulo
-	chapterID, err := d.getChapterID(mangaID, chapter)
+	chapterID, err := d.getChapterID(mangaID, chapterNumber)
 	if err != nil {
 		return err
 	}
 
-	// 3. Obter URLs das páginas
 	pages, err := d.getChapterPages(chapterID)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Encontradas %d páginas. Iniciando download...\n", len(pages.Chapter.Data))
+	for i, page := range pages.Chapter.Data {
+		imageURL := fmt.Sprintf("%s/data/%s/%s", pages.BaseURL, pages.Chapter.Hash, page)
+		outputPath := filepath.Join(outputDir, fmt.Sprintf("%03d%s", i+1, filepath.Ext(page)))
 
-	// 4. Baixar cada página
-	for i, filename := range pages.Chapter.Data {
-		// Construir URL da imagem
-		imageURL := fmt.Sprintf("%s/data/%s/%s", pages.BaseURL, pages.Chapter.Hash, filename)
-
-		// Definir caminho de saída
-		outPath := filepath.Join(outDir, fmt.Sprintf("%03d_%s", i+1, filename))
-
-		fmt.Printf("Baixando página %d/%d...\n", i+1, len(pages.Chapter.Data))
-
-		// Baixar a imagem
-		if err := d.downloadImage(imageURL, outPath); err != nil {
+		if err := d.downloadImage(imageURL, outputPath); err != nil {
 			return fmt.Errorf("erro ao baixar página %d: %w", i+1, err)
 		}
 
-		// Esperar um pouco para não sobrecarregar o servidor
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	fmt.Printf("Download do capítulo %s concluído com sucesso!\n", chapter)
 	return nil
 }
 
 // SetLanguage define o idioma das traduções
-func (d *MangaDexDriver) SetLanguage(lang string) {
-	d.language = lang
+func (d *MangaDexDriver) SetLanguage(language string) {
+	d.language = language
 }
 
 // downloadImage baixa uma imagem de uma URL e salva em um arquivo
-func (d *MangaDexDriver) downloadImage(imageURL, outPath string) error {
+func (d *MangaDexDriver) downloadImage(imageURL, outputPath string) error {
 	resp, err := d.client.Get(imageURL)
 	if err != nil {
 		return err
@@ -262,17 +223,15 @@ func (d *MangaDexDriver) downloadImage(imageURL, outPath string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("erro ao baixar imagem: %s", resp.Status)
+		return fmt.Errorf("erro ao baixar imagem: status %d", resp.StatusCode)
 	}
 
-	// Criar arquivo de saída
-	outFile, err := os.Create(outPath)
+	out, err := os.Create(outputPath)
 	if err != nil {
 		return err
 	}
-	defer outFile.Close()
+	defer out.Close()
 
-	// Copiar dados da resposta para o arquivo
-	_, err = io.Copy(outFile, resp.Body)
+	_, err = io.Copy(out, resp.Body)
 	return err
 }
