@@ -9,3 +9,11 @@ type Driver interface {
 	// DownloadChapter baixa um capítulo específico de um mangá e salva no diretório de saída
 	DownloadChapter(manga string, chapter string, outDir string) error
 }
+
+// LanguageSupportDriver é uma interface adicional para drivers que suportam múltiplos idiomas
+type LanguageSupportDriver interface {
+	Driver
+
+	// SetLanguage define o idioma das traduções
+	SetLanguage(lang string)
+}

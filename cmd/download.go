@@ -6,15 +6,17 @@ import (
 	"strconv"
 
 	"github.com/breno5g/manga-cli/core"
+	"github.com/breno5g/manga-cli/drivers/mangadex"
 	"github.com/spf13/cobra"
 )
 
 var (
-	site   string
-	manga  string
-	start  int
-	end    int
-	output string
+	site     string
+	manga    string
+	start    int
+	end      int
+	output   string
+	language string
 )
 
 // downloadCmd representa o comando para baixar capítulos de mangá
@@ -27,6 +29,14 @@ var downloadCmd = &cobra.Command{
 		driver, exists := availableDrivers[site]
 		if !exists {
 			return fmt.Errorf("site não suportado: %s", site)
+		}
+
+		// Configurar idioma para o MangaDex se for o site selecionado
+		if site == "mangadex" {
+			if md, ok := driver.(*mangadex.MangaDexDriver); ok && language != "" {
+				md.SetLanguage(language)
+				fmt.Printf("Idioma configurado para: %s\n", language)
+			}
 		}
 
 		// Criar downloader com o driver selecionado
@@ -55,6 +65,7 @@ func init() {
 	downloadCmd.Flags().IntVar(&start, "start", 1, "Capítulo inicial")
 	downloadCmd.Flags().IntVar(&end, "end", 1, "Capítulo final")
 	downloadCmd.Flags().StringVar(&output, "output", "./downloads", "Diretório de saída")
+	downloadCmd.Flags().StringVar(&language, "lang", "pt-br", "Idioma dos capítulos (para MangaDex)")
 
 	// Marcar flags obrigatórias
 	downloadCmd.MarkFlagRequired("site")

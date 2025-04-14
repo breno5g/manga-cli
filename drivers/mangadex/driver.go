@@ -15,7 +15,8 @@ import (
 
 // MangaDexDriver implementa a interface Driver para o site MangaDex
 type MangaDexDriver struct {
-	client *http.Client
+	client   *http.Client
+	language string
 }
 
 // NewDriver cria uma nova instância do driver MangaDex
@@ -24,6 +25,7 @@ func NewDriver() interfaces.Driver {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		language: "pt-br", // Define português do Brasil como idioma padrão
 	}
 }
 
@@ -49,7 +51,8 @@ type chapterResult struct {
 	Data []struct {
 		ID         string `json:"id"`
 		Attributes struct {
-			Chapter string `json:"chapter"`
+			Chapter            string `json:"chapter"`
+			TranslatedLanguage string `json:"translatedLanguage"`
 		} `json:"attributes"`
 	} `json:"data"`
 }
@@ -80,7 +83,8 @@ func (d *MangaDexDriver) GetChapters(manga string) ([]string, error) {
 
 	q := req.URL.Query()
 	q.Add("manga", mangaID)
-	q.Add("limit", "100") // Limite de resultados por página
+	q.Add("translatedLanguage[]", d.language) // Filtrar por idioma português
+	q.Add("limit", "100")                     // Limite de resultados por página
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := d.client.Do(req)
@@ -152,6 +156,7 @@ func (d *MangaDexDriver) getChapterID(mangaID, chapterNum string) (string, error
 	q := req.URL.Query()
 	q.Add("manga", mangaID)
 	q.Add("chapter", chapterNum)
+	q.Add("translatedLanguage[]", d.language) // Filtrar por idioma português
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := d.client.Do(req)
@@ -170,7 +175,7 @@ func (d *MangaDexDriver) getChapterID(mangaID, chapterNum string) (string, error
 	}
 
 	if len(result.Data) == 0 {
-		return "", fmt.Errorf("capítulo não encontrado: %s", chapterNum)
+		return "", fmt.Errorf("capítulo %s não encontrado em português", chapterNum)
 	}
 
 	return result.Data[0].ID, nil
@@ -198,6 +203,8 @@ func (d *MangaDexDriver) getChapterPages(chapterID string) (*chapterPagesResult,
 
 // DownloadChapter baixa todas as páginas de um capítulo
 func (d *MangaDexDriver) DownloadChapter(manga, chapter, outDir string) error {
+	fmt.Printf("Buscando capítulo %s de %s em português (pt-br)...\n", chapter, manga)
+
 	// 1. Encontrar o ID do mangá
 	mangaID, err := d.findMangaID(manga)
 	if err != nil {
@@ -216,6 +223,8 @@ func (d *MangaDexDriver) DownloadChapter(manga, chapter, outDir string) error {
 		return err
 	}
 
+	fmt.Printf("Encontradas %d páginas. Iniciando download...\n", len(pages.Chapter.Data))
+
 	// 4. Baixar cada página
 	for i, filename := range pages.Chapter.Data {
 		// Construir URL da imagem
@@ -223,6 +232,8 @@ func (d *MangaDexDriver) DownloadChapter(manga, chapter, outDir string) error {
 
 		// Definir caminho de saída
 		outPath := filepath.Join(outDir, fmt.Sprintf("%03d_%s", i+1, filename))
+
+		fmt.Printf("Baixando página %d/%d...\n", i+1, len(pages.Chapter.Data))
 
 		// Baixar a imagem
 		if err := d.downloadImage(imageURL, outPath); err != nil {
@@ -233,7 +244,13 @@ func (d *MangaDexDriver) DownloadChapter(manga, chapter, outDir string) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
+	fmt.Printf("Download do capítulo %s concluído com sucesso!\n", chapter)
 	return nil
+}
+
+// SetLanguage define o idioma das traduções
+func (d *MangaDexDriver) SetLanguage(lang string) {
+	d.language = lang
 }
 
 // downloadImage baixa uma imagem de uma URL e salva em um arquivo
