@@ -55,7 +55,7 @@ type chapterResult struct {
 
 // chapterPagesResult representa a resposta com os dados de páginas de um capítulo
 type chapterPagesResult struct {
-	BaseURL string   `json:"baseUrl"`
+	BaseURL string `json:"baseUrl"`
 	Chapter struct {
 		Hash      string   `json:"hash"`
 		Data      []string `json:"data"`
